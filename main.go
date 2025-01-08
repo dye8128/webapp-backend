@@ -3,30 +3,29 @@ package main
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
+	"github.com/labstack/echo/v4"
 )
 
-// #region city
 type City struct {
-	ID          int    `json:"ID,omitempty" db:"ID"`
-	Name        string `json:"name,omitempty" db:"Name"`
+	ID          int    `json:"id,omitempty"  db:"ID"`
+	Name        string `json:"name,omitempty"  db:"Name"`
 	CountryCode string `json:"countryCode,omitempty"  db:"CountryCode"`
 	District    string `json:"district,omitempty"  db:"District"`
 	Population  int    `json:"population,omitempty"  db:"Population"`
 }
 
-type Country struct {
-	Code       string `json:"Code,omitempty" db:"Code"`
-	Name       string `json:"Name,omitempty" db:"Name"`
-	Population int    `json:"Population,omitempty" db:"Population"`
-}
+var (
+	db *sqlx.DB
+)
 
-// #endregion city
 func main() {
 	jst, err := time.LoadLocation("Asia/Tokyo")
 	if err != nil {
@@ -44,49 +43,54 @@ func main() {
 		Loc:       jst,
 	}
 
-	db, err := sqlx.Open("mysql", conf.FormatDSN())
+	_db, err := sqlx.Open("mysql", conf.FormatDSN())
 
 	if err != nil {
 		log.Fatal(err)
 	}
-
 	log.Println("connected")
-	// #region get
-	var city City
-	err = db.Get(&city, "SELECT * FROM city WHERE Name = ?", "Tokyo")
-	if errors.Is(err, sql.ErrNoRows) {
-		log.Printf("no such city Name = '%s'\n", "Tokyo")
-		return
-	}
-	if err != nil {
-		log.Fatalf("DB Error: %s\n", err)
-	}
-	// #endregion get
-	log.Printf("Tokyoの人口は%d人です\n", city.Population)
+	db = _db
 
-	// 基本問題
-	if len(os.Args) != 2 {
-		log.Fatalf("Usage: %s cityName\n", os.Args[0])
-	}
-	cityName := os.Args[1]
-	err = db.Get(&city, "SELECT * FROM city WHERE Name = ?", cityName)
+	e := echo.New()
+
+	e.GET("/cities/:cityName", getCityInfoHandler)
+
+	e.POST("/addCity", addCityHandler)
+
+	e.Start(":8080")
+}
+
+func getCityInfoHandler(c echo.Context) error {
+	cityName := c.Param("cityName")
+	log.Println(cityName)
+
+	var city City
+	err := db.Get(&city, "SELECT * FROM city WHERE Name=?", cityName)
 	if errors.Is(err, sql.ErrNoRows) {
-		log.Printf("no such city Name = '%s'\n", cityName)
-		return
+		return echo.NewHTTPError(http.StatusNotFound, fmt.Sprintf("No such city Name = %s", cityName))
 	}
 	if err != nil {
-		log.Fatalf("DB Error: %s\n", err)
+		log.Printf("DB Error: %s", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
-	log.Printf("%sの人口は%d人です\n", cityName, city.Population)
-	var country Country
-	err = db.Get(&country, "SELECT Code, Name, Population FROM country WHERE Code = ?", city.CountryCode)
-	if errors.Is(err, sql.ErrNoRows) {
-		log.Printf("no such country Code = '%s'\n", city.CountryCode)
-		return
+
+	return c.JSON(http.StatusOK, city)
+}
+
+func addCityHandler(c echo.Context) error {
+	var data City
+	if err := c.Bind(&data); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid request: %s", err))
 	}
+
+	result, err := db.Exec("INSERT INTO city (Name, CountryCode, District, Population) VALUES (?, ?, ?, ?)", data.Name, data.CountryCode, data.District, data.Population)
 	if err != nil {
-		log.Fatalf("DB Error: %s\n", err)
+		log.Printf("DB Error: %s", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
-	log.Printf("%sの人口は%d人です\n", country.Name, country.Population)
-	log.Printf("%sの人口比率は%.2f%%です\n", cityName, float64(city.Population)/float64(country.Population)*100)
+
+	id, _ := result.LastInsertId()
+	data.ID = int(id)
+
+	return c.JSON(http.StatusCreated, data)
 }
