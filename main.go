@@ -1,38 +1,32 @@
 package main
 
 import (
-	"database/sql"
-	"errors"
 	"log"
 	"os"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
+	"github.com/joho/godotenv"
+	"github.com/labstack/echo-contrib/session"
+	"github.com/labstack/echo/v4/middleware"
+	"github.com/labstack/echo/v4"
+	"github.com/srinathgs/mysqlstore"
+	"github.com/traPtitech/naro-template-backend/handler"
 )
 
-// #region city
-type City struct {
-	ID          int    `json:"ID,omitempty" db:"ID"`
-	Name        string `json:"name,omitempty" db:"Name"`
-	CountryCode string `json:"countryCode,omitempty"  db:"CountryCode"`
-	District    string `json:"district,omitempty"  db:"District"`
-	Population  int    `json:"population,omitempty"  db:"Population"`
-}
-
-type Country struct {
-	Code       string `json:"Code,omitempty" db:"Code"`
-	Name       string `json:"Name,omitempty" db:"Name"`
-	Population int    `json:"Population,omitempty" db:"Population"`
-}
-
-// #endregion city
 func main() {
-	jst, err := time.LoadLocation("Asia/Tokyo")
+	// .envファイルから環境変数を読み込み
+	err := godotenv.Load(".env")
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	// データーベースの設定
+	jst, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		log.Fatal(err)
+	}
 	conf := mysql.Config{
 		User:      os.Getenv("DB_USERNAME"),
 		Passwd:    os.Getenv("DB_PASSWORD"),
@@ -44,49 +38,40 @@ func main() {
 		Loc:       jst,
 	}
 
+	// データベースに接続
 	db, err := sqlx.Open("mysql", conf.FormatDSN())
-
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	log.Println("connected")
-	// #region get
-	var city City
-	err = db.Get(&city, "SELECT * FROM city WHERE Name = ?", "Tokyo")
-	if errors.Is(err, sql.ErrNoRows) {
-		log.Printf("no such city Name = '%s'\n", "Tokyo")
-		return
-	}
-	if err != nil {
-		log.Fatalf("DB Error: %s\n", err)
-	}
-	// #endregion get
-	log.Printf("Tokyoの人口は%d人です\n", city.Population)
+	// usersテーブルが存在しなかったら、usersテーブルを作成する
+	_, err = db.Exec("CREATE TABLE IF NOT EXISTS users (Username VARCHAR(255) PRIMARY KEY, HashedPass VARCHAR(255))") 
+	if err != nil { 
+		log.Fatal(err) 
+	} 
 
-	// 基本問題
-	if len(os.Args) != 2 {
-		log.Fatalf("Usage: %s cityName\n", os.Args[0])
-	}
-	cityName := os.Args[1]
-	err = db.Get(&city, "SELECT * FROM city WHERE Name = ?", cityName)
-	if errors.Is(err, sql.ErrNoRows) {
-		log.Printf("no such city Name = '%s'\n", cityName)
-		return
-	}
+	store, err := mysqlstore.NewMySQLStoreFromConnection(db.DB, "sessions", "/", 60*60*24*14, []byte("secret-token"))
+	// secret-token は秘密鍵
 	if err != nil {
-		log.Fatalf("DB Error: %s\n", err)
+		log.Fatal(err)
 	}
-	log.Printf("%sの人口は%d人です\n", cityName, city.Population)
-	var country Country
-	err = db.Get(&country, "SELECT Code, Name, Population FROM country WHERE Code = ?", city.CountryCode)
-	if errors.Is(err, sql.ErrNoRows) {
-		log.Printf("no such country Code = '%s'\n", city.CountryCode)
-		return
-	}
+
+	h := handler.NewHandler(db)
+	e := echo.New()
+	e.Use(middleware.Logger())
+	e.Use(session.Middleware(store))
+
+	e.POST("/signup", h.SignUpHandler)
+	e.POST("/login", h.LoginHandler)
+
+	withAuth := e.Group("")
+	withAuth.Use(handler.UserAuthMiddleware)
+	withAuth.GET("/me", handler.GetMeHandler)
+	withAuth.GET("/cities/:cityName", h.GetCityInfoHandler)
+	withAuth.POST("/cities", h.PostCityHandler)
+
+	err = e.Start(":8080")
 	if err != nil {
-		log.Fatalf("DB Error: %s\n", err)
+		log.Fatal(err)
 	}
-	log.Printf("%sの人口は%d人です\n", country.Name, country.Population)
-	log.Printf("%sの人口比率は%.2f%%です\n", cityName, float64(city.Population)/float64(country.Population)*100)
 }
