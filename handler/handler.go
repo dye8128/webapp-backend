@@ -3,11 +3,13 @@ package handler
 import (
 	"database/sql"
 	"errors"
+
 	// "hash"
 	"log"
 	"net/http"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/labstack/echo-contrib/session"
 	"github.com/labstack/echo/v4"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -31,6 +33,15 @@ type City struct {
 type LoginRequestBody struct {
 	Username string `json:"username,omitempty" form:"username"`
 	Password string `json:"password,omitempty" form:"password"`
+}
+
+type User struct {
+	Username   string `json:"username,omitempty"  db:"Username"`
+	HashedPass string `json:"-"  db:"HashedPass"`
+}
+
+type Me struct {
+	Username string `json:"username,omitempty"  db:"username"`
 }
 
 func (h *Handler) GetCityInfoHandler(c echo.Context) error {
@@ -109,4 +120,67 @@ func (h *Handler) SignUpHandler(c echo.Context) error {
 	}
 
 	return c.NoContent(http.StatusCreated)
+}
+
+func (h *Handler) LoginHandler(c echo.Context) error {
+	var req LoginRequestBody
+	err := c.Bind(&req)
+	if err != nil {
+		return c.String(http.StatusBadRequest, "bad request body")
+	}
+
+	if req.Password == "" || req.Username == "" {
+		return c.String(http.StatusBadRequest, "username or password is empty")
+	}
+
+	user := User{}
+	err = h.db.Get(&user, "SELECT * FROM users WHERE Username=?", req.Username)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return c.NoContent(http.StatusUnauthorized)
+		} else {
+			log.Println(err)
+			return c.NoContent(http.StatusInternalServerError)
+		}
+	}
+
+	err = bcrypt.CompareHashAndPassword([]byte(user.HashedPass),[]byte(req.Password))
+	if err != nil {
+		if errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {
+			return c.NoContent(http.StatusUnauthorized)
+		} else {
+			return c.NoContent(http.StatusInternalServerError)
+		}
+	}
+
+	sess, err := session.Get("sessions", c)
+	if err != nil {
+		log.Println(err)
+		return c.String(http.StatusInternalServerError, "something wrong in getting session")
+	}
+	sess.Values["userName"] = req.Username
+	sess.Save(c.Request(), c.Response())
+
+	return c.NoContent(http.StatusOK)
+}
+
+func UserAuthMiddleware(next echo.HandlerFunc) echo.HandlerFunc { 
+	return func(c echo.Context) error { 
+		sess, err := session.Get("sessions", c) 
+		if err != nil { 
+			log.Println(err) 
+			return c.String(http.StatusInternalServerError, "something wrong in getting session") 
+		} 
+		if sess.Values["userName"] == nil { 
+			return c.String(http.StatusUnauthorized, "please login") 
+		} 
+		c.Set("userName", sess.Values["userName"].(string)) 
+		return next(c) 
+	} 
+} 
+
+func GetMeHandler(c echo.Context) error {
+	return c.JSON(http.StatusOK, Me{
+		Username: c.Get("userName").(string),
+	})
 }
