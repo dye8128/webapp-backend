@@ -201,3 +201,17 @@ func (h *Handler) GetWorldHandler(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, data)
 }
+
+func (h *Handler) GetCountryHandler(c echo.Context) error {
+	countryCode := c.Param("countryCode")
+
+	var data []City
+	err := h.db.Select(&data, "SELECT * FROM city WHERE CountryCode=?", countryCode)
+	if err != nil {
+		log.Println(err)
+		log.Println("failed to get city data")
+		return c.NoContent(http.StatusInternalServerError)
+	}
+
+	return c.JSON(http.StatusOK, data)
+}

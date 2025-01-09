@@ -72,6 +72,7 @@ func main() {
 	withAuth.GET("/cities/:cityName", h.GetCityInfoHandler)
 	withAuth.POST("/cities", h.PostCityHandler)
 	withAuth.GET("/world", h.GetWorldHandler)
+	withAuth.GET("/country/:countryCode", h.GetCountryHandler)
 
 	err = e.Start(":8080")
 	if err != nil {
