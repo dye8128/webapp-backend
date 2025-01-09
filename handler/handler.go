@@ -30,6 +30,11 @@ type City struct {
 	Population  sql.NullInt64  `json:"population,omitempty"  db:"Population"`
 }
 
+type Country struct {
+	Code  string `json:"code,omitempty"  db:"Code"`
+	Name  string `json:"name,omitempty"  db:"Name"`
+}
+
 type LoginRequestBody struct {
 	Username string `json:"username,omitempty" form:"username"`
 	Password string `json:"password,omitempty" form:"password"`
@@ -183,4 +188,16 @@ func GetMeHandler(c echo.Context) error {
 	return c.JSON(http.StatusOK, Me{
 		Username: c.Get("userName").(string),
 	})
+}
+
+func (h *Handler) GetWorldHandler(c echo.Context) error {
+	data := []Country{}
+	err := h.db.Select(&data, "SELECT Code, Name FROM country")
+	if err != nil {
+		log.Println(err)
+		log.Println("failed to get country data")
+		return c.NoContent(http.StatusInternalServerError)
+	}
+
+	return c.JSON(http.StatusOK, data)
 }
