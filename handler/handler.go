@@ -215,3 +215,15 @@ func (h *Handler) GetCountryHandler(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, data)
 }
+
+func (h *Handler) LogoutHandler(c echo.Context) error {
+	sess, err := session.Get("sessions", c)
+	if err != nil {
+		log.Println(err)
+		return c.String(http.StatusInternalServerError, "something wrong in getting session")
+	}
+	sess.Values["userName"] = nil
+	sess.Save(c.Request(), c.Response())
+
+	return c.NoContent(http.StatusOK)
+}
